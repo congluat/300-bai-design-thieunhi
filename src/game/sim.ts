@@ -81,6 +81,18 @@ export function nodeCost(n: GNode): number {
   return c.managed ? c.cost : c.cost * sizeOf(n.size).cost * Math.max(1, n.inst);
 }
 
+/** App Servers with >1 instance but a non-LB parent: only one instance actually receives traffic. */
+export function missingLB(d: Design, n: GNode): boolean {
+  if (n.kind !== 'app' || n.inst < 2) return false;
+  const kinds = new Map(d.nodes.map((x) => [x.id, x.kind]));
+  return d.edges.some((e) => e.to === n.id && kinds.has(e.from) && kinds.get(e.from) !== 'lb' && kinds.get(e.from) !== 'ratelimiter');
+}
+
+/** Capacity the node can really use inside this design. */
+export function effectiveCapacity(d: Design, n: GNode): number {
+  return missingLB(d, n) ? instanceCapacity(n) : nodeCapacity(n);
+}
+
 export function designCost(d: Design): number {
   return d.nodes.reduce((s, n) => s + nodeCost(n), 0);
 }
@@ -259,12 +271,9 @@ export function simulate(d: Design, traffic: Traffic, req: Requirements): SimRes
   for (const n of d.nodes) nodes[n.id] = { id: n.id, load: 0, capacity: nodeCapacity(n), util: 0, byType: {}, blocked: 0 };
   // Several App Servers without a Load Balancer in front -> only one instance actually gets traffic
   for (const n of d.nodes) {
-    if (n.kind !== 'app' || n.inst < 2) continue;
-    const parents = d.edges.filter((e) => e.to === n.id && g.nodes.has(e.from)).map((e) => g.kind(e.from));
-    if (parents.some((k) => k !== 'lb' && k !== 'ratelimiter')) {
-      nodes[n.id].capacity = instanceCapacity(n);
-      issues.push({ level: 'warn', nodeId: n.id, text: `App Server has ${n.inst} instances but is not behind a Load Balancer → only 1 instance receives traffic.` });
-    }
+    if (!missingLB(d, n)) continue;
+    nodes[n.id].capacity = instanceCapacity(n);
+    issues.push({ level: 'error', nodeId: n.id, text: `App Server has ${n.inst} instances but no Load Balancer in front → only 1 instance receives traffic (${fmt(instanceCapacity(n))} of ${fmt(nodeCapacity(n))} req/s usable). Put a Load Balancer between Users and App Server.` });
   }
   const edges: SimResult['edges'] = {};
   const lost = new Map<string, number>(); // id|type -> rps

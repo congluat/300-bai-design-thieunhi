@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { COMPONENTS, REQUEST_TYPES, sizeOf, type Kind, type ReqType } from '../game/components';
-import { edgeKey, fmtShort, nodeCapacity, nodeCost, wouldCycle, type Design, type GNode, type SimResult } from '../game/sim';
+import { edgeKey, fmtShort, missingLB, nodeCapacity, nodeCost, wouldCycle, instanceCapacity, type Design, type GNode, type SimResult } from '../game/sim';
 import { linePaths, seedOf, shapePaths, type PathInfo } from './sketch';
 
 export const NODE_W = 150;
@@ -316,7 +316,9 @@ const Canvas = forwardRef<CanvasApi, Props>(function Canvas(
                     ? '~20ms internet'
                     : c.managed
                       ? `managed · ∞ · ${c.lat}ms · $${c.cost}`
-                      : `${fmtShort(nodeCapacity(n))} req/s · ${c.lat}ms · $${fmtShort(nodeCost(n))}`}
+                      : missingLB(design, n)
+                        ? `only ${fmtShort(instanceCapacity(n))} of ${fmtShort(nodeCapacity(n))} req/s used · $${fmtShort(nodeCost(n))}`
+                        : `${fmtShort(nodeCapacity(n))} req/s · ${c.lat}ms · $${fmtShort(nodeCost(n))}`}
                 </text>
                 {st && n.kind !== 'client' && (
                   <g transform={`translate(0, ${NODE_H + 28})`} pointerEvents="none">
@@ -328,6 +330,7 @@ const Canvas = forwardRef<CanvasApi, Props>(function Canvas(
                   </g>
                 )}
                 {spof && <text x={-6} y={-4} className="spof-tag">SPOF!</text>}
+                {missingLB(design, n) && <text x={-6} y={-6} className="spof-tag">⚠ needs Load Balancer</text>}
                 {HAS_OUT.includes(n.kind) && (
                   <g data-port={n.id} className="port">
                     <circle cx={NODE_W + 2} cy={NODE_H / 2} r={14} fill="transparent" />

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Level } from '../game/levels';
 import { CHAPTERS, DIFF_COLOR } from '../game/levels';
 import { COMPONENTS, REQUEST_TYPES, LEGIT_TYPES, SIZES, sizeOf, type Kind, type ReqType } from '../game/components';
-import { designCost, fmt, fmtShort, instanceCapacity, nodeCapacity, nodeCost, simulate, type Design, type SimResult } from '../game/sim';
+import { designCost, fmt, fmtShort, instanceCapacity, missingLB, nodeCapacity, nodeCost, simulate, type Design, type SimResult } from '../game/sim';
 import Canvas, { NODE_H, NODE_W, type CanvasApi, type Selection } from './Canvas';
 import { storage } from './storage';
 import Stars from './Stars';
@@ -179,7 +179,7 @@ export default function Play({ level, onBack, onNext, onStars }: Props) {
       </main>
 
       <aside className="right">
-        {selNode && <Inspector node={selNode} result={result} limit={level.req.caps?.[selNode.kind]} onInst={setInst} onSize={setSize} onDelete={deleteSelected} />}
+        {selNode && <Inspector design={design} node={selNode} result={result} limit={level.req.caps?.[selNode.kind]} onInst={setInst} onSize={setSize} onDelete={deleteSelected} />}
         {selected?.type === 'edge' && <EdgeCard sel={selected} design={design} result={result} onDelete={deleteSelected} />}
         <Report result={result} level={level} onRun={run} onNext={onNext} onFocus={(id) => setSelected({ type: 'node', id })} />
       </aside>
@@ -264,8 +264,8 @@ function Palette({ level, onAdd }: { level: Level; onAdd: (k: Kind) => void }) {
   );
 }
 
-function Inspector({ node, result, limit, onInst, onSize, onDelete }: {
-  node: Design['nodes'][number]; result: SimResult | null; limit?: number;
+function Inspector({ design, node, result, limit, onInst, onSize, onDelete }: {
+  design: Design; node: Design['nodes'][number]; result: SimResult | null; limit?: number;
   onInst: (id: string, n: number) => void; onSize: (id: string, s: number) => void; onDelete: () => void;
 }) {
   const c = COMPONENTS[node.kind];
@@ -317,6 +317,12 @@ function Inspector({ node, result, limit, onInst, onSize, onDelete }: {
           <div className="scale-total">
             <b>{sz.name} × {node.inst}</b> = ⚡ <b>{fmt(nodeCapacity(node))}</b> req/s · ⏱ {c.lat}ms · 💰 <b>${fmt(nodeCost(node))}</b>/month
           </div>
+          {missingLB(design, node) && (
+            <div className="lb-warn">
+              ⚠ No Load Balancer in front: callers can't spread requests over {node.inst} instances, so only one is used
+              (<b>{fmt(instanceCapacity(node))}</b> req/s). Add a Load Balancer: Users ➜ Load Balancer ➜ App Server.
+            </div>
+          )}
         </>
       )}
       {st && node.kind !== 'client' && (
