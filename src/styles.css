@@ -271,3 +271,9 @@ h4 { font-size: 17px; margin-top: .8em; color: var(--ink-soft); }
 .scale-row { margin: 10px 0 4px; }
 .scale-row > .lbl { display: block; }
 .scale-total { margin-top: 6px; padding: 6px 8px; background: #eef4ff; border-radius: 10px 4px 12px 5px; }
+
+.lv-tags { font-size: 15px; letter-spacing: 2px; }
+.pal-item.banned { opacity: .55; cursor: not-allowed; text-decoration: line-through; text-decoration-color: var(--red); background: #f3efe4; }
+.pal-item.banned:hover { transform: none; background: #f3efe4; }
+.limit { color: var(--red); }
+.biz li:not(:first-child) { background: #fff6c9; border-radius: 6px 3px 8px 4px; padding: 2px 6px; margin-top: 4px; list-style: none; margin-left: -18px; }

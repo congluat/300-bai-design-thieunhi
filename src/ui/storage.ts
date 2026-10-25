@@ -1,6 +1,6 @@
 import type { Design } from '../game/sim';
 
-const KEY = 'sdq:v2';
+const KEY = 'sdq:v3';
 
 interface Saved {
   stars: Record<string, number>;

@@ -1,11 +1,20 @@
-// Reference-solution builder used to derive budgets & latency targets for every level,
-// so every generated level is guaranteed to be solvable.
-import { COMPONENTS, LEGIT_TYPES, type Kind, type ReqType } from './components';
+// Reference-solution builder used to calibrate every level (budget & latency targets),
+// so every level is guaranteed to be solvable.
+import { COMPONENTS, SIZES, type Kind, type ReqType } from './components';
 import { designCost, simulate, type Design, type GNode, type Mods, type Requirements, type Traffic } from './sim';
 
 export interface RefFlags {
-  cdn: boolean; waf: boolean; rl: boolean; lb: boolean; cache: boolean; queue: boolean; search: boolean;
-  db: 'sql' | 'nosql'; replicas: number; minInst: number;
+  cdn: boolean; waf: boolean; rl: boolean; lb: boolean; cache: boolean; queue: boolean; search: boolean; s3: boolean;
+  db: 'sql' | 'nosql'; replicas: number;
+}
+
+export interface RefPlan {
+  allowed: Kind[];
+  noSPOF: boolean;
+  caps?: Partial<Record<Kind, number>>;
+  mods?: Mods;
+  /** force-disable some "best practice" flags (used by tests to build naive designs) */
+  disable?: Partial<Record<'cdn' | 'waf' | 'rl' | 'cache' | 'queue' | 'search', boolean>>;
 }
 
 export const TARGET_UTIL = 0.65;
@@ -22,8 +31,7 @@ export function buildRef(traffic: Traffic, f: RefFlags): Design {
   const has = (t: ReqType) => (traffic[t] ?? 0) > 0;
 
   add('client', 'client');
-  if (has('static') || has('upload')) add('s3', 'objstore');
-  if (has('static') && f.cdn) { add('cdn', 'cdn'); link('client', 'cdn', 's3'); }
+  if (f.s3) add('s3', 'objstore');
 
   const chain: string[] = ['client'];
   if (f.waf) { add('waf', 'waf'); chain.push('waf'); }
@@ -32,6 +40,11 @@ export function buildRef(traffic: Traffic, f: RefFlags): Design {
   add('app', 'app');
   chain.push('app');
   link(...chain);
+
+  if (has('static') && f.cdn) {
+    add('cdn', 'cdn');
+    link('client', 'cdn', f.s3 ? 's3' : f.lb ? 'lb' : 'app');
+  }
 
   add('db', f.db);
   const readers = ['db'];
@@ -46,52 +59,80 @@ export function buildRef(traffic: Traffic, f: RefFlags): Design {
     else link('app', 'db');
   }
   if (has('search')) {
-    if (f.search) { add('se', 'search'); link('app', 'se'); } else link('app', 'db');
+    if (f.search) { add('se', 'search'); link('app', 'se'); } else for (const r of readers) link('app', r);
   }
-  if (has('upload') || (has('static') && !f.cdn)) link('app', 's3');
+  if (f.s3 && (has('upload') || (has('static') && !f.cdn))) link('app', 's3');
   return { nodes, edges };
 }
 
-const LOOSE = (mods?: Mods): Requirements => ({ success: 0, latency: {}, budget: Infinity, mods });
+const LOOSE = (plan: RefPlan): Requirements => ({ success: 0, latency: {}, budget: Infinity, mods: plan.mods });
 
-/** Scale instance counts so every node sits at ≤ TARGET_UTIL. Returns null if impossible. */
-export function sizeRef(d: Design, traffic: Traffic, f: RefFlags, mods?: Mods): Design | null {
-  const min = new Map<string, number>();
-  for (const n of d.nodes) min.set(n.id, n.kind === 'replica' ? Math.max(f.minInst, n.inst) : f.minInst);
-  let cur = d;
-  for (let iter = 0; iter < 6; iter++) {
-    const r = simulate(cur, traffic, LOOSE(mods));
+function limitOf(kind: Kind, plan: RefPlan): number {
+  const c = COMPONENTS[kind];
+  return Math.min(c.maxInst ?? 1, plan.caps?.[kind] ?? Infinity);
+}
+
+/**
+ * Scale every node so it sits at ≤ TARGET_UTIL, choosing the cheapest (size, instances) combo
+ * within the level's instance caps. horizontalOnly keeps each node's current size.
+ * Returns null if impossible.
+ */
+export function sizeDesign(d: Design, traffic: Traffic, plan: RefPlan, opts: { horizontalOnly?: boolean } = {}): Design | null {
+  const minInst = plan.noSPOF ? 2 : 1;
+  const hasLB = d.nodes.some((n) => n.kind === 'lb');
+  const floor = new Map(d.nodes.map((n) => [n.id, n.kind === 'replica' ? n.inst : 1]));
+  let cur: Design = { ...d, nodes: d.nodes.map((n) => ({ ...n })) };
+  for (let iter = 0; iter < 8; iter++) {
+    const r = simulate(cur, traffic, LOOSE(plan));
     let changed = false;
     const nodes = cur.nodes.map((n) => {
       const c = COMPONENTS[n.kind];
       if (c.managed) return n;
-      if (c.haOnly) {
-        const inst = f.minInst >= 2 ? 2 : 1;
-        if (inst !== n.inst) changed = true;
-        return { ...n, inst };
+      const load = r.nodes[n.id].load;
+      const limit = n.kind === 'app' && !hasLB ? 1 : limitOf(n.kind, plan);
+      const sizes = opts.horizontalOnly ? [n.size ?? 0] : SIZES.map((_, i) => i);
+      let best: { size: number; inst: number; cost: number } | null = null;
+      for (const s of sizes) {
+        const per = c.cap * SIZES[s].cap;
+        let inst: number;
+        if (c.haOnly) {
+          if (load > per * TARGET_UTIL) continue;
+          inst = minInst;
+        } else {
+          inst = Math.max(minInst, floor.get(n.id) ?? 1, Math.ceil(load / (per * TARGET_UTIL) - 1e-9));
+        }
+        if (inst > limit) continue;
+        const cost = c.cost * SIZES[s].cost * inst;
+        if (!best || cost < best.cost - 1e-9) best = { size: s, inst, cost };
       }
-      const need = Math.max(min.get(n.id) ?? 1, Math.ceil(r.nodes[n.id].load / (c.cap * TARGET_UTIL) - 1e-9));
-      if (need > n.inst) { changed = true; return { ...n, inst: need }; }
-      return n;
+      if (!best) return { ...n, inst: Infinity };
+      const grow = best.inst > n.inst || (n.size ?? 0) !== best.size;
+      if (!grow) return n;
+      // only ever grow capacity to guarantee convergence
+      const curCap = c.cap * SIZES[n.size ?? 0].cap * (c.haOnly ? 1 : n.inst);
+      const newCap = c.cap * SIZES[best.size].cap * (c.haOnly ? 1 : best.inst);
+      if (newCap < curCap - 1e-9 && iter > 0) return n;
+      changed = true;
+      return { ...n, inst: best.inst, size: best.size || undefined };
     });
+    if (nodes.some((n) => !isFinite(n.inst))) return null;
     cur = { ...cur, nodes };
     if (!changed) break;
   }
-  const r = simulate(cur, traffic, LOOSE(mods));
+  const r = simulate(cur, traffic, LOOSE(plan));
   for (const n of cur.nodes) {
     const c = COMPONENTS[n.kind];
-    if (!c.managed && n.inst > (c.maxInst ?? 1)) return null;
+    if (c.managed) continue;
+    if (n.inst > limitOf(n.kind, plan)) return null;
+    if (plan.noSPOF && n.inst < 2) return null;
     if (r.nodes[n.id].util > TARGET_UTIL + 1e-6) return null;
-    if (n.kind === 'app' && n.inst > 1 && !f.lb) return null;
   }
   if (!r.types.every((t) => t.ok > 0.9999)) return null;
   return cur;
 }
 
-export interface RefPlan { allowed: Kind[]; noSPOF: boolean; disable?: Partial<Record<keyof RefFlags, boolean>> }
-
-/** Build + size the cheapest sensible reference design within the allowed components. */
-export function referenceDesign(traffic: Traffic, plan: RefPlan, mods?: Mods): Design | null {
+/** Build + size the cheapest sensible reference design within the level's rules. */
+export function referenceDesign(traffic: Traffic, plan: RefPlan): Design | null {
   const A = (k: Kind) => plan.allowed.includes(k);
   const has = (t: ReqType) => (traffic[t] ?? 0) > 0;
   const off = plan.disable ?? {};
@@ -103,42 +144,42 @@ export function referenceDesign(traffic: Traffic, plan: RefPlan, mods?: Mods): D
     cache: A('cache') && has('read') && !off.cache,
     queue: A('queue') && A('worker') && has('write') && !off.queue,
     search: A('search') && has('search') && !off.search,
-    db: 'sql',
+    s3: A('objstore') && (has('static') || has('upload')),
+    db: A('sql') ? 'sql' : 'nosql',
     replicas: 0,
-    minInst: plan.noSPOF && !off.minInst ? 2 : 1,
   };
-  const tryFlags = (f: RefFlags) => sizeRef(buildRef(traffic, f), traffic, f, mods);
+  if (has('upload') && !base.s3) return null;
+  const candidates: Design[] = [];
+  const tryFlags = (f: RefFlags) => {
+    const d = sizeDesign(buildRef(traffic, f), traffic, plan);
+    if (d) candidates.push(d);
+  };
 
-  // 1) plain SQL
-  let d = tryFlags(base);
-  if (d) return d;
-  // 2) SQL + read replicas
-  if (A('replica')) {
-    const probe = simulate(buildRef(traffic, base), traffic, LOOSE(mods));
-    const db = probe.nodes['db'];
-    const reads = db?.byType.read ?? 0;
-    const other = (db?.load ?? 0) - reads;
-    const room = COMPONENTS.sql.cap * TARGET_UTIL - other;
-    if (room > 0 && reads > 0) {
-      const k0 = Math.max(1, Math.ceil(reads / room) - 1);
-      for (let k = k0; k <= Math.min(COMPONENTS.replica.maxInst!, k0 + 4); k++) {
-        d = tryFlags({ ...base, replicas: k });
-        if (d) return d;
+  if (A('sql')) {
+    tryFlags(base);
+    if (A('replica') && (has('read') || (has('search') && !base.search))) {
+      const probe = simulate(buildRef(traffic, base), traffic, LOOSE(plan));
+      const db = probe.nodes['db'];
+      const readish = (db?.byType.read ?? 0) + (db?.byType.search ?? 0) * 10;
+      const other = (db?.load ?? 0) - readish;
+      for (const s of [0, 1, 2]) {
+        const room = COMPONENTS.sql.cap * SIZES[s].cap * TARGET_UTIL - other;
+        if (room <= 0 || readish <= 0) continue;
+        const k0 = Math.max(1, Math.ceil(readish / room) - 1);
+        for (let k = k0; k <= Math.min(limitOf('replica', plan), k0 + 2); k++) tryFlags({ ...base, replicas: k });
       }
     }
   }
-  // 3) sharded NoSQL
-  if (A('nosql')) {
-    d = tryFlags({ ...base, db: 'nosql' });
-    if (d) return d;
-  }
-  return null;
+  if (A('nosql')) tryFlags({ ...base, db: 'nosql' });
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => designCost(a) - designCost(b));
+  return candidates[0];
 }
 
 const ceilTo = (v: number, step: number) => Math.ceil(v / step) * step;
 
-export function niceBudget(cost: number): number {
-  const v = cost * 1.3;
+export function niceBudget(cost: number, slack = 1.3): number {
+  const v = cost * slack;
   if (v < 1000) return ceilTo(v, 10);
   if (v < 10000) return ceilTo(v, 50);
   if (v < 100000) return ceilTo(v, 500);
@@ -146,19 +187,23 @@ export function niceBudget(cost: number): number {
 }
 
 export function deriveRequirements(
-  ref: Design, traffic: Traffic, opts: { success: number; noSPOF: boolean; strict: ReqType[]; mods?: Mods },
+  ref: Design, traffic: Traffic,
+  opts: { success: number; noSPOF: boolean; strict: ReqType[]; mods?: Mods; caps?: Partial<Record<Kind, number>>; slack?: number },
 ): Requirements {
-  const r = simulate(ref, traffic, LOOSE(opts.mods));
+  const r = simulate(ref, traffic, { success: 0, latency: {}, budget: Infinity, mods: opts.mods });
   const latency: Partial<Record<ReqType, number>> = {};
   for (const t of r.types) {
     latency[t.type] = opts.strict.includes(t.type) ? ceilTo(t.lat + 6, 5) : ceilTo(t.lat * 1.5, 10);
   }
-  return { success: opts.success, latency, budget: niceBudget(designCost(ref)), noSPOF: opts.noSPOF || undefined, mods: opts.mods };
+  return {
+    success: opts.success, latency, budget: niceBudget(designCost(ref), opts.slack),
+    noSPOF: opts.noSPOF || undefined, mods: opts.mods, caps: opts.caps,
+  };
 }
 
 export function refSummary(ref: Design): string {
-  const app = ref.nodes.find((n) => n.kind === 'app');
-  return `A reference design uses ~${app?.inst ?? 1} App Server instance${(app?.inst ?? 1) > 1 ? 's' : ''} and costs ~$${Math.round(designCost(ref)).toLocaleString('en-US')}/month.`;
+  const parts = ref.nodes
+    .filter((n) => !COMPONENTS[n.kind].managed)
+    .map((n) => `${COMPONENTS[n.kind].name} ${SIZES[n.size ?? 0].name}×${n.inst}`);
+  return `A reference design uses: ${parts.join(', ')} — about $${Math.round(designCost(ref)).toLocaleString('en-US')}/month.`;
 }
-
-export { LEGIT_TYPES };

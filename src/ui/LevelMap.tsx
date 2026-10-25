@@ -59,6 +59,7 @@ export default function LevelMap({ onPick, onChange, focus }: { onPick: (i: numb
           <li>Drag from the <b className="dot">●</b> on a component's right edge to another component to connect them.</li>
           <li>Scale each component <b>out</b> (more instances) or <b>up</b> (bigger machine S → 2XL), hit <b>▶ Run simulation</b> and read the report.</li>
         </ol>
+        <p className="muted">Each level has its own twist: 🚫 banned component · 🔒 instance limit (scale up!) · 📈 traffic spike · 🧊 low cache/CDN hit rate · 🧯 no single point of failure · ⏱ extra-tight latency</p>
         <p className="muted">⭐ Meet every requirement · ⭐⭐ Cost ≤ 80% of budget · ⭐⭐⭐ Plus every component ≤ 70% utilization</p>
       </section>
 
@@ -96,6 +97,7 @@ export default function LevelMap({ onPick, onChange, focus }: { onPick: (i: numb
                         <span key={t} className="dot-chip" style={{ background: REQUEST_TYPES[t].color }} title={REQUEST_TYPES[t].label} />
                       ))}
                     </span>
+                    {l.tags.length > 0 && <span className="lv-tags" title={l.business.slice(1).join('\n')}>{l.tags.join(' ')}</span>}
                     <span className="lv-foot">
                       <span>{fmtShort(totalRps)}/s</span>
                       {unlocked ? <Stars n={stars} size={14} /> : <span>🔒</span>}

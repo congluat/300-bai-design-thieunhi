@@ -104,7 +104,7 @@ export default function Play({ level, onBack, onNext, onStars }: Props) {
       ...d,
       nodes: d.nodes.map((x) => {
         if (x.id !== id) return x;
-        const max = COMPONENTS[x.kind].maxInst ?? 1;
+        const max = Math.min(COMPONENTS[x.kind].maxInst ?? 1, level.req.caps?.[x.kind] ?? Infinity);
         return { ...x, inst: Math.max(1, Math.min(max, Math.round(n) || 1)) };
       }),
     }));
@@ -179,7 +179,7 @@ export default function Play({ level, onBack, onNext, onStars }: Props) {
       </main>
 
       <aside className="right">
-        {selNode && <Inspector node={selNode} result={result} onInst={setInst} onSize={setSize} onDelete={deleteSelected} />}
+        {selNode && <Inspector node={selNode} result={result} limit={level.req.caps?.[selNode.kind]} onInst={setInst} onSize={setSize} onDelete={deleteSelected} />}
         {selected?.type === 'edge' && <EdgeCard sel={selected} design={design} result={result} onDelete={deleteSelected} />}
         <Report result={result} level={level} onRun={run} onNext={onNext} onFocus={(id) => setSelected({ type: 'node', id })} />
       </aside>
@@ -250,18 +250,27 @@ function Palette({ level, onAdd }: { level: Level; onAdd: (k: Kind) => void }) {
             </button>
           );
         })}
+        {(level.twist.ban ?? []).map((k) => (
+          <div key={k} className="pal-item banned" title={`Not available in this level${level.twist.why ? ': ' + level.twist.why : ''}`}>
+            <span className="pi-icon">{COMPONENTS[k].icon}</span>
+            <span className="pi-body">
+              <span className="pi-name">{COMPONENTS[k].name}</span>
+              <span className="pi-stats">🚫 not available here</span>
+            </span>
+          </div>
+        ))}
       </div>
     </section>
   );
 }
 
-function Inspector({ node, result, onInst, onSize, onDelete }: {
-  node: Design['nodes'][number]; result: SimResult | null;
+function Inspector({ node, result, limit, onInst, onSize, onDelete }: {
+  node: Design['nodes'][number]; result: SimResult | null; limit?: number;
   onInst: (id: string, n: number) => void; onSize: (id: string, s: number) => void; onDelete: () => void;
 }) {
   const c = COMPONENTS[node.kind];
   const st = result?.nodes[node.id];
-  const max = c.maxInst ?? 1;
+  const max = Math.min(c.maxInst ?? 1, limit ?? Infinity);
   const perInst = instanceCapacity(node);
   const need = st && !c.managed && !c.haOnly ? Math.ceil(st.load / (perInst * 0.7)) : 0;
   const sz = sizeOf(node.size);
@@ -302,7 +311,7 @@ function Inspector({ node, result, onInst, onSize, onDelete }: {
               <input type="number" min={1} max={max} value={node.inst} onChange={(e) => onInst(node.id, Number(e.target.value))} />
               <button className="btn small" onClick={() => onInst(node.id, node.inst + 1)} disabled={node.inst >= max}>+</button>
               {max > 50 && <button className="btn small" onClick={() => onInst(node.id, node.inst + 10)} disabled={node.inst >= max}>+10</button>}
-              <span className="muted small">max {fmt(max)}</span>
+              <span className={`small ${limit !== undefined ? 'limit' : 'muted'}`}>{limit !== undefined ? '🔒 ' : ''}max {fmt(max)}</span>
             </div>
           </div>
           <div className="scale-total">

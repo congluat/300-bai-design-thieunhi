@@ -14,6 +14,8 @@ export interface Mods {
   cacheHit?: number;
   /** override CDN hit rate (0..1) */
   cdnHit?: number;
+  /** peak / average traffic ratio. Everything must survive the peak, except work behind a Message Queue (it buffers the burst). */
+  spike?: number;
 }
 
 export interface Requirements {
@@ -26,6 +28,8 @@ export interface Requirements {
   /** no single point of failure allowed */
   noSPOF?: boolean;
   mods?: Mods;
+  /** per-level max instance count for some components (e.g. licence / rack limits) */
+  caps?: Partial<Record<Kind, number>>;
 }
 
 export interface TypeResult {
@@ -267,12 +271,15 @@ export function simulate(d: Design, traffic: Traffic, req: Requirements): SimRes
   const degraded = new Set<string>();
 
   // Pass 1: propagate traffic to compute each node's load
-  const propagate = (id: string, t: ReqType, amt: number, depth: number) => {
+  const spike = Math.max(1, req.mods?.spike ?? 1);
+  // amt = peak-rate traffic arriving at this node (average × spike, until a queue flattens it)
+  const propagate = (id: string, t: ReqType, amt: number, depth: number, peak: number) => {
     if (amt < 1e-6 || depth > 64) return;
     const r = g.route(id, t);
     const st = nodes[id];
     st.load += amt * r.w;
     st.byType[t] = (st.byType[t] ?? 0) + amt;
+    const nextPeak = g.kind(id) === 'queue' ? 1 : peak;
     if (t === 'attack' && r.serve > 0 && g.kind(id) !== 'app') st.blocked += amt * r.serve;
     if (r.degraded) degraded.add(id);
     const handled = r.serve + r.fwd.reduce((s, f) => s + f.frac, 0);
@@ -283,11 +290,11 @@ export function simulate(d: Design, traffic: Traffic, req: Requirements): SimRes
     for (const f of r.fwd) {
       const ek = edgeKey(id, f.to);
       const e = (edges[ek] ??= {});
-      e[t] = (e[t] ?? 0) + amt * f.frac;
-      propagate(f.to, t, amt * f.frac, depth + 1);
+      e[t] = (e[t] ?? 0) + (amt * f.frac * nextPeak) / peak;
+      propagate(f.to, t, (amt * f.frac * nextPeak) / peak, depth + 1, nextPeak);
     }
   };
-  if (client) for (const [t, rps] of Object.entries(traffic) as [ReqType, number][]) if (rps > 0) propagate(client.id, t, rps, 0);
+  if (client) for (const [t, rps] of Object.entries(traffic) as [ReqType, number][]) if (rps > 0) propagate(client.id, t, rps * spike, 0, spike);
 
   let maxUtil = 0;
   for (const st of Object.values(nodes)) {
@@ -367,6 +374,15 @@ export function simulate(d: Design, traffic: Traffic, req: Requirements): SimRes
   const spofPass = !req.noSPOF || spof.length === 0;
   for (const id of spof) issues.push({ level: 'error', nodeId: id, text: `${COMPONENTS[g.kind(id)].name} has a single instance → single point of failure.` });
 
+  let capPass = true;
+  for (const n of d.nodes) {
+    const cap = req.caps?.[n.kind];
+    if (cap !== undefined && n.inst > cap) {
+      capPass = false;
+      issues.push({ level: 'error', nodeId: n.id, text: `${COMPONENTS[n.kind].name}: this level allows at most ${cap} instance${cap > 1 ? 's' : ''} — scale up with a bigger size instead.` });
+    }
+  }
+
   const cost = designCost(d);
   const costPass = cost <= req.budget;
   if (!costPass) issues.push({ level: 'error', text: `Over budget: $${fmt(cost)} / $${fmt(req.budget)} per month.` });
@@ -378,7 +394,7 @@ export function simulate(d: Design, traffic: Traffic, req: Requirements): SimRes
   const attackTotal = traffic.attack ?? 0;
   const attackBlocked = Object.values(nodes).reduce((s, n) => s + n.blocked, 0);
 
-  const pass = types.length > 0 && types.every((x) => x.okPass && x.latPass) && costPass && spofPass && !!client;
+  const pass = types.length > 0 && types.every((x) => x.okPass && x.latPass) && costPass && spofPass && capPass && !!client;
   let stars = 0;
   if (pass) {
     stars = 1;
