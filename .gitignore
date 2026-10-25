@@ -4,3 +4,5 @@ dist
 .DS_Store
 *.tsbuildinfo
 publish.bat
+redeploy.bat
+push-update.bat

@@ -41,3 +41,30 @@ describe('generated levels', () => {
     expect(r.pass).toBe(false);
   });
 });
+
+describe('vertical scaling', () => {
+  it('bigger sizes multiply capacity and cost', async () => {
+    const { nodeCapacity, nodeCost } = await import('./sim');
+    const base = { id: 'a', kind: 'app' as const, x: 0, y: 0, inst: 3 };
+    expect(nodeCapacity({ ...base, size: 2 })).toBe(1000 * 4 * 3);
+    expect(nodeCost({ ...base, size: 2 })).toBeCloseTo(40 * 4.8 * 3);
+    const sql = { id: 'd', kind: 'sql' as const, x: 0, y: 0, inst: 2, size: 3 };
+    expect(nodeCapacity(sql)).toBe(3000 * 8);
+  });
+
+  it('a scaled-up SQL primary absorbs load that overloads a small one', () => {
+    const traffic = { read: 4000, write: 500 };
+    const req = { success: 0.99, latency: {}, budget: 1e9 };
+    const mk = (size: number) => ({
+      nodes: [
+        { id: 'c', kind: 'client' as const, x: 0, y: 0, inst: 1 },
+        { id: 'lb', kind: 'lb' as const, x: 0, y: 0, inst: 1 },
+        { id: 'a', kind: 'app' as const, x: 0, y: 0, inst: 7 },
+        { id: 'db', kind: 'sql' as const, x: 0, y: 0, inst: 1, size },
+      ],
+      edges: [{ from: 'c', to: 'lb' }, { from: 'lb', to: 'a' }, { from: 'a', to: 'db' }],
+    });
+    expect(simulate(mk(0), traffic, req).pass).toBe(false);
+    expect(simulate(mk(2), traffic, req).pass).toBe(true);
+  });
+});

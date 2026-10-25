@@ -73,7 +73,7 @@ export const COMPONENTS: Record<Kind, ComponentDef> = {
   },
   sql: {
     name: 'SQL Database', icon: '🗄️', shape: 'cylinder', cap: 3000, lat: 15, cost: 150, maxInst: 2, haOnly: true,
-    desc: 'Primary relational DB. Writes cost 2× a read; full-text search costs 10× and adds 200ms. A 2nd instance is a hot standby for HA (no extra throughput).',
+    desc: 'Primary relational DB. Writes cost 2× a read; full-text search costs 10× and adds 200ms. Only one primary takes writes: scale it UP with a bigger machine size. A 2nd instance is a hot standby for HA (no extra throughput).',
   },
   replica: {
     name: 'Read Replica', icon: '📚', shape: 'cylinder', cap: 3000, lat: 15, cost: 100, maxInst: 30,
@@ -102,6 +102,17 @@ export const COMPONENTS: Record<Kind, ComponentDef> = {
 };
 
 export const DB_KINDS: Kind[] = ['sql', 'replica', 'nosql'];
+
+/** Vertical scaling: machine sizes. Each step doubles capacity but costs a bit more than double. */
+export interface SizeDef { name: string; cap: number; cost: number }
+export const SIZES: SizeDef[] = [
+  { name: 'S', cap: 1, cost: 1 },
+  { name: 'M', cap: 2, cost: 2.2 },
+  { name: 'L', cap: 4, cost: 4.8 },
+  { name: 'XL', cap: 8, cost: 10.5 },
+  { name: '2XL', cap: 16, cost: 23 },
+];
+export const sizeOf = (i?: number): SizeDef => SIZES[Math.max(0, Math.min(SIZES.length - 1, i ?? 0))];
 
 /** Request types a component can handle itself (ignoring forwarding). */
 export const HANDLES: Partial<Record<Kind, ReqType[]>> = {

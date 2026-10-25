@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { COMPONENTS, REQUEST_TYPES, type Kind, type ReqType } from '../game/components';
-import { edgeKey, fmtShort, wouldCycle, type Design, type GNode, type SimResult } from '../game/sim';
+import { COMPONENTS, REQUEST_TYPES, sizeOf, type Kind, type ReqType } from '../game/components';
+import { edgeKey, fmtShort, nodeCapacity, nodeCost, wouldCycle, type Design, type GNode, type SimResult } from '../game/sim';
 import { linePaths, seedOf, shapePaths, type PathInfo } from './sketch';
 
 export const NODE_W = 150;
@@ -301,18 +301,29 @@ const Canvas = forwardRef<CanvasApi, Props>(function Canvas(
                 <Paths paths={paths} />
                 <text x={NODE_W / 2} y={c.shape === 'diamond' ? 32 : 30} className="node-icon">{c.icon}</text>
                 <text x={NODE_W / 2} y={c.shape === 'diamond' ? 56 : 58} className="node-label">{c.name}</text>
-                {!c.managed && (
-                  <g transform={`translate(${NODE_W - 4}, 2)`}>
-                    <circle r={15} className="badge" />
-                    <text className="badge-text" y={5}>×{n.inst}</text>
-                  </g>
-                )}
+                {!c.managed && (() => {
+                  const label = `${sizeOf(n.size).name}×${n.inst}`;
+                  const w = 12 + label.length * 8;
+                  return (
+                    <g transform={`translate(${NODE_W - w / 2 + 6}, -4)`}>
+                      <rect x={-w / 2} y={-11} width={w} height={22} rx={10} className="badge" />
+                      <text className="badge-text" y={5}>{label}</text>
+                    </g>
+                  );
+                })()}
+                <text x={NODE_W / 2} y={NODE_H + 19} className="node-spec" pointerEvents="none">
+                  {n.kind === 'client'
+                    ? '~20ms internet'
+                    : c.managed
+                      ? `managed · ∞ · ${c.lat}ms · $${c.cost}`
+                      : `${fmtShort(nodeCapacity(n))} req/s · ${c.lat}ms · $${fmtShort(nodeCost(n))}`}
+                </text>
                 {st && n.kind !== 'client' && (
-                  <g transform={`translate(0, ${NODE_H + 12})`} pointerEvents="none">
+                  <g transform={`translate(0, ${NODE_H + 28})`} pointerEvents="none">
                     <rect x={10} y={0} width={NODE_W - 20} height={7} rx={3} className="util-bg" />
                     <rect x={10} y={0} width={Math.min(1, st.util) * (NODE_W - 20)} height={7} rx={3} fill={utilColor(st.util)} />
-                    <text x={NODE_W / 2} y={24} className={`util-text ${st.util > 1 ? 'bad' : ''}`}>
-                      {c.cap === Infinity ? '' : `${Math.round(st.util * 100)}% · ${fmtShort(st.load)}/${fmtShort(st.capacity)}`}
+                    <text x={NODE_W / 2} y={22} className={`util-text ${st.util > 1 ? 'bad' : ''}`}>
+                      {c.cap === Infinity ? '' : `${Math.round(st.util * 100)}% load · ${fmtShort(st.load)}/${fmtShort(st.capacity)}`}
                     </text>
                   </g>
                 )}

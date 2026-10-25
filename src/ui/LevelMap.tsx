@@ -57,7 +57,7 @@ export default function LevelMap({ onPick, onChange, focus }: { onPick: (i: numb
           <li>Read the brief: business rules, traffic (req/s), latency targets and budget.</li>
           <li>Drag components from the toolbox onto the canvas (or click to add).</li>
           <li>Drag from the <b className="dot">●</b> on a component's right edge to another component to connect them.</li>
-          <li>Set instance counts, hit <b>▶ Run simulation</b> and read the report.</li>
+          <li>Scale each component <b>out</b> (more instances) or <b>up</b> (bigger machine S → 2XL), hit <b>▶ Run simulation</b> and read the report.</li>
         </ol>
         <p className="muted">⭐ Meet every requirement · ⭐⭐ Cost ≤ 80% of budget · ⭐⭐⭐ Plus every component ≤ 70% utilization</p>
       </section>

@@ -69,6 +69,7 @@ export const CHAPTERS: Chapter[] = [
     hints: [
       'Connect Users ➜ App Server ➜ SQL Database (drag from the ● dot on the right edge).',
       'One App Server handles 1,000 req/s. More instances need a Load Balancer in front.',
+      'You can also scale UP: pick a bigger machine size (S → 2XL) in the inspector. Each size doubles capacity but costs ~2.2×.',
     ],
     levels: [
       ['Personal Blog', 'You just launched a blog. A few friends read it and leave the occasional comment.'],

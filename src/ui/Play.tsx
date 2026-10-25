@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Level } from '../game/levels';
 import { CHAPTERS, DIFF_COLOR } from '../game/levels';
-import { COMPONENTS, REQUEST_TYPES, LEGIT_TYPES, type Kind, type ReqType } from '../game/components';
-import { designCost, fmt, fmtShort, simulate, type Design, type SimResult } from '../game/sim';
+import { COMPONENTS, REQUEST_TYPES, LEGIT_TYPES, SIZES, sizeOf, type Kind, type ReqType } from '../game/components';
+import { designCost, fmt, fmtShort, instanceCapacity, nodeCapacity, nodeCost, simulate, type Design, type SimResult } from '../game/sim';
 import Canvas, { NODE_H, NODE_W, type CanvasApi, type Selection } from './Canvas';
 import { storage } from './storage';
 import Stars from './Stars';
@@ -110,6 +110,10 @@ export default function Play({ level, onBack, onNext, onStars }: Props) {
     }));
   };
 
+  const setSize = (id: string, size: number) => {
+    update((d) => ({ ...d, nodes: d.nodes.map((x) => (x.id === id ? { ...x, size } : x)) }));
+  };
+
   const reset = () => {
     if (!confirm('Clear the whole canvas for this level?')) return;
     update(() => DEFAULT_DESIGN());
@@ -175,7 +179,7 @@ export default function Play({ level, onBack, onNext, onStars }: Props) {
       </main>
 
       <aside className="right">
-        {selNode && <Inspector node={selNode} result={result} onInst={setInst} onDelete={deleteSelected} />}
+        {selNode && <Inspector node={selNode} result={result} onInst={setInst} onSize={setSize} onDelete={deleteSelected} />}
         {selected?.type === 'edge' && <EdgeCard sel={selected} design={design} result={result} onDelete={deleteSelected} />}
         <Report result={result} level={level} onRun={run} onNext={onNext} onFocus={(id) => setSelected({ type: 'node', id })} />
       </aside>
@@ -251,33 +255,60 @@ function Palette({ level, onAdd }: { level: Level; onAdd: (k: Kind) => void }) {
   );
 }
 
-function Inspector({ node, result, onInst, onDelete }: {
+function Inspector({ node, result, onInst, onSize, onDelete }: {
   node: Design['nodes'][number]; result: SimResult | null;
-  onInst: (id: string, n: number) => void; onDelete: () => void;
+  onInst: (id: string, n: number) => void; onSize: (id: string, s: number) => void; onDelete: () => void;
 }) {
   const c = COMPONENTS[node.kind];
   const st = result?.nodes[node.id];
   const max = c.maxInst ?? 1;
-  const need = st && !c.managed && !c.haOnly ? Math.ceil(st.load / (c.cap * 0.7)) : 0;
+  const perInst = instanceCapacity(node);
+  const need = st && !c.managed && !c.haOnly ? Math.ceil(st.load / (perInst * 0.7)) : 0;
+  const sz = sizeOf(node.size);
   return (
     <section className="card inspector sketch-box">
       <h3>{c.icon} {c.name}</h3>
       <p className="small">{c.desc}</p>
-      <div className="stats">
-        <span>⚡ {c.managed ? '∞' : fmt(c.cap)} req/s{!c.managed && !c.haOnly ? ' / instance' : ''}</span>
-        <span>⏱ {c.lat}ms</span>
-        <span>💰 ${c.cost}{!c.managed ? ' / instance' : ''}</span>
-      </div>
-      {!c.managed && (
-        <div className="stepper">
-          <span>{c.haOnly ? 'Instances (HA)' : 'Instances'}</span>
-          {max > 50 && <button className="btn small" onClick={() => onInst(node.id, node.inst - 10)} disabled={node.inst <= 1}>−10</button>}
-          <button className="btn small" onClick={() => onInst(node.id, node.inst - 1)} disabled={node.inst <= 1}>−</button>
-          <input type="number" min={1} max={max} value={node.inst} onChange={(e) => onInst(node.id, Number(e.target.value))} />
-          <button className="btn small" onClick={() => onInst(node.id, node.inst + 1)} disabled={node.inst >= max}>+</button>
-          {max > 50 && <button className="btn small" onClick={() => onInst(node.id, node.inst + 10)} disabled={node.inst >= max}>+10</button>}
-          <span className="muted small">max {fmt(max)}</span>
+      {c.managed ? (
+        <div className="stats">
+          <span>⚡ ∞ req/s (managed)</span>
+          <span>⏱ {c.lat}ms</span>
+          <span>💰 ${c.cost}/month</span>
         </div>
+      ) : node.kind !== 'client' && (
+        <>
+          <div className="scale-row">
+            <span className="lbl">⬆️ Scale up — machine size</span>
+            <div className="size-picker">
+              {SIZES.map((s, i) => (
+                <button
+                  key={s.name}
+                  className={`size-btn ${(node.size ?? 0) === i ? 'on' : ''}`}
+                  onClick={() => onSize(node.id, i)}
+                  title={`${fmt(c.cap * s.cap)} req/s for $${fmt(c.cost * s.cost)} per instance`}
+                >
+                  <b>{s.name}</b>
+                  <span>{fmtShort(c.cap * s.cap)}/s</span>
+                  <span className="muted">${fmtShort(c.cost * s.cost)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="scale-row">
+            <span className="lbl">➡️ Scale out — {c.haOnly ? 'instances (2nd = standby, no extra throughput)' : 'instances'}</span>
+            <div className="stepper">
+              {max > 50 && <button className="btn small" onClick={() => onInst(node.id, node.inst - 10)} disabled={node.inst <= 1}>−10</button>}
+              <button className="btn small" onClick={() => onInst(node.id, node.inst - 1)} disabled={node.inst <= 1}>−</button>
+              <input type="number" min={1} max={max} value={node.inst} onChange={(e) => onInst(node.id, Number(e.target.value))} />
+              <button className="btn small" onClick={() => onInst(node.id, node.inst + 1)} disabled={node.inst >= max}>+</button>
+              {max > 50 && <button className="btn small" onClick={() => onInst(node.id, node.inst + 10)} disabled={node.inst >= max}>+10</button>}
+              <span className="muted small">max {fmt(max)}</span>
+            </div>
+          </div>
+          <div className="scale-total">
+            <b>{sz.name} × {node.inst}</b> = ⚡ <b>{fmt(nodeCapacity(node))}</b> req/s · ⏱ {c.lat}ms · 💰 <b>${fmt(nodeCost(node))}</b>/month
+          </div>
+        </>
       )}
       {st && node.kind !== 'client' && (
         <div className="node-load">
@@ -288,7 +319,8 @@ function Inspector({ node, result, onInst, onDelete }: {
             ))}
           </div>
           {st.blocked > 0 && <div>🛡️ Blocked {fmt(st.blocked)} attack req/s</div>}
-          {need > node.inst && <div className="muted small">Needs ≥ {fmt(need)} instances to stay under 70%.</div>}
+          {need > node.inst && <div className="muted small">At size {sz.name} it needs ≥ {fmt(need)} instances to stay under 70% — or pick a bigger size.</div>}
+          {c.haOnly && st.util > 0.7 && <div className="muted small">Only one primary takes writes — scale it up with a bigger size, add replicas/cache, or move to NoSQL.</div>}
         </div>
       )}
       {!c.fixed && <button className="btn danger small" onClick={onDelete}>🗑 Delete component (Del)</button>}

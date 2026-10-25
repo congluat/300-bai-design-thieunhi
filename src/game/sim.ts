@@ -1,9 +1,10 @@
 import {
-  COMPONENTS, HANDLES, PASSTHROUGH, LEGIT_TYPES, REQUEST_TYPES,
+  COMPONENTS, HANDLES, PASSTHROUGH, LEGIT_TYPES, REQUEST_TYPES, sizeOf,
   type Kind, type ReqType,
 } from './components';
 
-export interface GNode { id: string; kind: Kind; x: number; y: number; inst: number }
+/** inst = horizontal scale (instance count), size = vertical scale (index into SIZES, default 0 = S) */
+export interface GNode { id: string; kind: Kind; x: number; y: number; inst: number; size?: number }
 export interface GEdge { from: string; to: string }
 export interface Design { nodes: GNode[]; edges: GEdge[] }
 export type Traffic = Partial<Record<ReqType, number>>
@@ -59,15 +60,21 @@ interface Route {
 
 export const edgeKey = (from: string, to: string) => `${from}->${to}`;
 
+/** capacity of one instance, including vertical size */
+export function instanceCapacity(n: GNode): number {
+  const c = COMPONENTS[n.kind];
+  return c.managed ? c.cap : c.cap * sizeOf(n.size).cap;
+}
+
 export function nodeCapacity(n: GNode): number {
   const c = COMPONENTS[n.kind];
-  if (c.managed || c.haOnly) return c.cap;
-  return c.cap * Math.max(1, n.inst);
+  if (c.managed || c.haOnly) return instanceCapacity(n);
+  return instanceCapacity(n) * Math.max(1, n.inst);
 }
 
 export function nodeCost(n: GNode): number {
   const c = COMPONENTS[n.kind];
-  return c.managed ? c.cost : c.cost * Math.max(1, n.inst);
+  return c.managed ? c.cost : c.cost * sizeOf(n.size).cost * Math.max(1, n.inst);
 }
 
 export function designCost(d: Design): number {
@@ -139,7 +146,8 @@ class Graph {
   private weight(id: string): number {
     const n = this.nodes.get(id)!;
     const c = COMPONENTS[n.kind];
-    return c.managed || c.haOnly ? 1 : Math.max(1, n.inst);
+    if (c.managed) return 1;
+    return (c.haOnly ? 1 : Math.max(1, n.inst)) * sizeOf(n.size).cap;
   }
 
   route(id: string, t: ReqType): Route {
@@ -250,7 +258,7 @@ export function simulate(d: Design, traffic: Traffic, req: Requirements): SimRes
     if (n.kind !== 'app' || n.inst < 2) continue;
     const parents = d.edges.filter((e) => e.to === n.id && g.nodes.has(e.from)).map((e) => g.kind(e.from));
     if (parents.some((k) => k !== 'lb' && k !== 'ratelimiter')) {
-      nodes[n.id].capacity = COMPONENTS.app.cap;
+      nodes[n.id].capacity = instanceCapacity(n);
       issues.push({ level: 'warn', nodeId: n.id, text: `App Server has ${n.inst} instances but is not behind a Load Balancer → only 1 instance receives traffic.` });
     }
   }

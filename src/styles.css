@@ -200,7 +200,8 @@ h4 { font-size: 17px; margin-top: .8em; color: var(--ink-soft); }
 .node-icon { font-size: 22px; text-anchor: middle; }
 .node-label { font-family: var(--hand); font-size: 17px; text-anchor: middle; fill: var(--ink); paint-order: stroke; stroke: rgba(255,255,255,.85); stroke-width: 4px; }
 .badge { fill: #fff; stroke: var(--ink); stroke-width: 1.6; }
-.badge-text { font-size: 14px; text-anchor: middle; font-family: var(--hand); }
+.badge-text { font-size: 14px; text-anchor: middle; font-family: var(--hand); font-weight: bold; }
+.node-spec { font-size: 13.5px; text-anchor: middle; fill: #3d5f9e; font-family: var(--hand); }
 .port { cursor: crosshair; }
 .port-dot { fill: var(--blue); stroke: #fff; stroke-width: 2; transition: r .1s; }
 .port:hover .port-dot { r: 9; }
@@ -258,3 +259,15 @@ h4 { font-size: 17px; margin-top: .8em; color: var(--ink-soft); }
   .left.tools .brief { display: none; }
   .topbar .actions { width: 100%; justify-content: flex-end; }
 }
+
+.size-picker { display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 0 2px; }
+.size-btn {
+  display: flex; flex-direction: column; align-items: center; min-width: 50px;
+  background: #fff; border: 1.6px solid var(--ink); border-radius: var(--sketch-radius-2);
+  padding: 2px 6px; cursor: pointer; font-size: 13px; line-height: 1.15;
+}
+.size-btn b { font-size: 16px; }
+.size-btn.on { background: var(--hl); box-shadow: 2px 2px 0 var(--shadow); }
+.scale-row { margin: 10px 0 4px; }
+.scale-row > .lbl { display: block; }
+.scale-total { margin-top: 6px; padding: 6px 8px; background: #eef4ff; border-radius: 10px 4px 12px 5px; }
